@@ -24,13 +24,22 @@ def main(cache=False):
             for file in filenames:
                 if fnmatch(file, glob):
                     copy(join(reldir, file))
+            for dir in dirnames:
+                if fnmatch(dir, glob) and os.path.islink(join(CC_DIR, reldir, dir)):
+                    copy(join(reldir, dir))
 
 def copy(file):
     newFile = join(GIT_DIR, file)
-    debug('Copying %s' % newFile)
+    srcFile = join(CC_DIR, file)
     mkdirs(newFile)
-    shutil.copy(join(CC_DIR, file), newFile)
-    os.chmod(newFile, stat.S_IREAD | stat.S_IWRITE)
+    if os.path.islink(srcFile):
+        linkTo = os.readlink(srcFile)
+        debug('Linking %s -> %s' % (newFile, linkTo))
+        os.symlink(linkTo, newFile)
+    else:
+        debug('Copying %s' % newFile)
+        shutil.copy2(srcFile, newFile)
+        os.chmod(newFile, os.lstat(newFile).st_mode | stat.S_IWRITE)
 
 def syncCache():
     cache1 = Cache(GIT_DIR)
