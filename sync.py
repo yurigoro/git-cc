@@ -21,12 +21,12 @@ def main(cache=False):
             reldir = dirpath[len(base)+1:]
             if fnmatch(reldir, './lost+found'):
                 continue
+            for dir in dirnames:
+                if fnmatch(dir, glob):
+                    copy(join(reldir, dir))
             for file in filenames:
                 if fnmatch(file, glob):
                     copy(join(reldir, file))
-            for dir in dirnames:
-                if fnmatch(dir, glob) and os.path.islink(join(CC_DIR, reldir, dir)):
-                    copy(join(reldir, dir))
 
 def copy(file):
     newFile = join(GIT_DIR, file)
@@ -36,6 +36,9 @@ def copy(file):
         linkTo = os.readlink(srcFile)
         debug('Linking %s -> %s' % (newFile, linkTo))
         os.symlink(linkTo, newFile)
+    elif os.path.isdir(srcFile):
+        debug('Creating %s' % newFile)
+        os.mkdir(newFile)
     else:
         debug('Copying %s' % newFile)
         shutil.copy2(srcFile, newFile)
