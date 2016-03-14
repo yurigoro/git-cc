@@ -18,9 +18,10 @@ ARGS = {
     'initial': 'checkin everything from the beginning',
     'all': 'checkin all parents, not just the first',
     'cclabel': 'optionally specify an existing Clearcase label type to apply to each element checked in',
+    'preview': 'stage all changes to Clearcase and leave files checked out. If changes are checked into Clearcase manually - run "git tag -f master_ci" afterwards',
 }
 
-def main(force=False, no_deliver=False, initial=False, all=False, cclabel=''):
+def main(force=False, no_deliver=False, initial=False, all=False, cclabel='', preview=False):
     validateCC()
     global IGNORE_CONFLICTS
     global CC_LABEL
@@ -38,11 +39,17 @@ def main(force=False, no_deliver=False, initial=False, all=False, cclabel=''):
     if not log:
         return
     cc.rebase()
+    transaction = ITransaction('') if initial else Transaction('')
     for line in log.split('\x00'):
         id, comment = line.split('\x01')
+        comment = comment.strip()
         statuses = getStatuses(id, initial)
-        checkout(statuses, comment.strip(), initial)
-        tag(CI_TAG, id)
+        if not preview:
+            transaction = ITransaction(comment) if initial else Transaction(comment)
+        checkout(statuses, transaction)
+        if not preview :
+            transaction.commit(comment);
+            tag(CI_TAG, id)
     if not no_deliver:
         cc.commit()
     if initial:
@@ -80,9 +87,8 @@ def getStatuses(id, initial):
         list.append(type)
     return list
 
-def checkout(stats, comment, initial):
+def checkout(stats, transaction):
     """Poor mans two-phase commit"""
-    transaction = ITransaction(comment) if initial else Transaction(comment)
     for stat in stats:
         try:
             stat.stage(transaction)
@@ -92,7 +98,6 @@ def checkout(stats, comment, initial):
 
     for stat in stats:
          stat.commit(transaction)
-    transaction.commit(comment);
 
 class ITransaction(object):
     def __init__(self, comment):
@@ -102,14 +107,14 @@ class ITransaction(object):
     def add(self, file):
         self.checkedout.append(file)
     def co(self, file):
-        cc_exec(['co', '-reserved', '-nc', file])
-        if CC_LABEL:
-            cc_exec(['mklabel', '-replace', '-nc', CC_LABEL, file])
-        self.add(file)
+        if file not in self.checkedout:
+            cc_exec(['co', '-reserved', '-nc', file])
+            if CC_LABEL:
+                cc_exec(['mklabel', '-replace', '-nc', CC_LABEL, file])
+            self.add(file)
     def stageDir(self, file):
         file = file if file else '.'
-        if file not in self.checkedout:
-            self.co(file)
+        self.co(file)
     def stage(self, file):
         self.co(file)
     def rollback(self):
@@ -119,17 +124,19 @@ class ITransaction(object):
     def commit(self, comment):
         for file in self.checkedout:
             cc_exec(['ci', '-identical', '-c', comment, file])
+        self.checkedout = []
 
 class Transaction(ITransaction):
     def __init__(self, comment):
         super(Transaction, self).__init__(comment)
         self.base = git_exec(['merge-base', CI_TAG, 'HEAD']).strip()
     def stage(self, file):
-        super(Transaction, self).stage(file)
-        ccid = git_exec(['hash-object', join(CC_DIR, file)])[0:-1]
-        gitid = getBlob(self.base, file)
-        if ccid != gitid:
-            if not IGNORE_CONFLICTS:
-                raise Exception('File has been modified: %s. Try rebasing.' % file)
-            else:
-                print ('WARNING: Detected possible confilct with',file,'...ignoring...')
+        if file not in self.checkedout:
+            ccid = git_exec(['hash-object', join(CC_DIR, file)])[0:-1]
+            gitid = getBlob(self.base, file)
+            if ccid != gitid:
+                if not IGNORE_CONFLICTS:
+                    raise Exception('File has been modified: %s. Try rebasing.' % file)
+                else:
+                    print ('WARNING: Detected possible confilct with',file,'...ignoring...')
+            super(Transaction, self).stage(file)
